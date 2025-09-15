@@ -237,7 +237,7 @@ This is the summarize for the content of [5.2 Page Translation](https://pdos.csa
 **Key Concepts:**
 1. Enabling Page Translation: Page translation only occurs if the PG bit in control register CR0 is set by the operating system—necessary for virtual memory and paging-based protection.
 2. Page Frames and Linear Addresses:
-- Page Frame: A 4 KB contiguous block in physical memory.
+- Page Frame: A page frame is a 4K-byte unit of contiguous addresses of physical memory. Pages begin onbyte boundaries and are fixed in size.
 - Linear Address: Divided into three parts—DIR, PAGE, and OFFSET—which are used to index into a page directory and table, then locate the specific byte within the page.
 3. Two-Level Page Tables: The system uses two levels: a page directory and second-level page tables. Each can hold up to 1K entries; combined, they can map the entire 4 GB physical memory space (2^20 pages × 2^12 bytes per page = 2^32).
 4. CR3 Register (Page Directory Base Register): CR3 holds the physical address of the current page directory. Operating systems may choose to use a single page directory for all tasks or separate ones per task.
@@ -533,46 +533,46 @@ page_insert(pde_t *pgdir, struct PageInfo *pp, void *va, int perm)
 
 2. What entries (rows) in the page directory have been filled in at this point? What addresses do they map and where do they point? In other words, fill out this table as much as possible:
 
-We can use the following to perform the relevant calculations:
+    > We can use the following to perform the relevant calculations:
 
-```py
-# To calculate the base virtual address from the offset
-hex(int(math.pow(2,22))*offset)
-# to calculate the offset from a virtual address:
-address // int(math.pow(2,22))
-```
+    > ```py
+    > # To calculate the base virtual address from the offset
+    > hex(int(math.pow(2,22))*offset)
+    > # to calculate the offset from a virtual address:
+    > address // int(math.pow(2,22))
+    > ```
 
-Entry | Base Virtual Address  | Points to (logically):
----|---|---
-1023|0xffc00000| Page table for top 4MB of phys memory
-...|...| page addresses holding RAM
-960|0xf0000000| the page table holding the mappings for the beginning of RAM (phyical address 0) (writable)
-959|0xefc00000| kernel stack (writable)
-958|0xef800000| unmapped
-957|0xef400000| a virtual page table at virtual address UVPT.
-956|0xef000000|  page table that contains the pages struct (which is readonly)
-955|0xeec00000|  unmapped
-...|...| unmapped
-0|0x00000000| unmapped
+    > Entry | Base Virtual Address  | Points to (logically):
+    > ---|---|---
+    > 1023|0xffc00000| Page table for top 4MB of phys memory
+    > ...|...| page addresses holding RAM
+    > 960|0xf0000000| the page table holding the mappings for the beginning of RAM (phyical address 0) (writable)
+    > 959|0xefc00000| kernel stack (writable)
+    > 958|0xef800000| unmapped
+    > 957|0xef400000| a virtual page table at virtual address UVPT.
+    > 956|0xef000000|  page table that contains the pages struct (which is readonly)
+    > 955|0xeec00000|  unmapped
+    > ...|...| unmapped
+    > 0|0x00000000| unmapped
 
 3. We have placed the kernel and user environment in the same address space. Why will user programs not be able to read or write the kernel's memory? What specific mechanisms protect the kernel memory?
 
-The kernel memory is protected by the page-level protection mechanism of the x86 architecture. Specifically, the page table entries (PTEs) for the kernel memory are marked with the User/Supervisor (U/S) bit set to 0, indicating that they are supervisor-level pages. This means that only code running in supervisor mode (CPL 0, 1, or 2) can access these pages. User programs, which run in user mode (CPL 3), cannot access these pages because their U/S bit is set to 1.
+    > The kernel memory is protected by the page-level protection mechanism of the x86 architecture. Specifically, the page table entries (PTEs) for the kernel memory are marked with the User/Supervisor (U/S) bit set to 0, indicating that they are supervisor-level pages. This means that only code running in supervisor mode (CPL 0, 1, or 2) can access these pages. User programs, which run in user mode (CPL 3), cannot access these pages because their U/S bit is set to 1.
 
 4. What is the maximum amount of physical memory that this operating system can support? Why?
 
-Read [this](https://qiita.com/kagurazakakotori/items/4232da25c412a0403c10#question-4)
+    > Read [this](https://qiita.com/kagurazakakotori/items/4232da25c412a0403c10#question-4)
 
 5. How much space overhead is there for managing memory, if we actually had the maximum amount of physical memory? How is this overhead broken down?
 
-We start from the assumption of a maximum of 256 MB of RAM, a page size of 4 KB, a classic 32-bit x86 paging scheme (no PAE, no huge pages), 4-byte page table entries (PTEs), and that the kernel maps the entire physical memory into its virtual address space. Dividing 256 MB by 4 KB gives 65,536 physical frames. Each frame requires one PTE, so the total cost for entries is `65,536 × 4 = 262,144 bytes`. A single page table contains `1,024 entries` and covers `1,024 × 4 KB = 4 MB`, so covering `256 MB` requires `64 page tables`. Each page table occupies exactly one `4 KB page`, so `64 × 4 KB = 262,144 bytes`, which matches the earlier calculation. In addition, the page directory itself always takes one 4 KB page (`1,024 entries × 4 bytes`), even though only `64 entries` are actively used here.
-
-Beyond these hardware structures, the kernel also maintains a software bookkeeping array of `PageInfo` structures to record the state of each frame (for example, reference counts and free list links). With each PageInfo being 8 bytes and one per frame, the cost is 65,536 × 8 = 524,288 bytes. Summing everything gives `262,144 (page tables) + 4,096 (page directory) + 524,288 (PageInfo) = 790,528 bytes`, or about 772 KB. The breakdown is roughly `66% for PageInfo`, `33% for page tables`, and `0.5% for the page directory`. Relative to the total `256 MB of RAM`, this overhead is only about `0.3%`, showing that most of the cost comes from per-frame software metadata rather than the paging hardware itself.
+    > We start from the assumption of a maximum of 256 MB of RAM, a page size of 4 KB, a classic 32-bit x86 paging scheme (no PAE, no huge pages), 4-byte page table entries (PTEs), and that the kernel maps the entire physical memory into its virtual address space. Dividing 256 MB by 4 KB gives 65,536 physical frames. Each frame requires one PTE, so the total cost for entries is `65,536 × 4 = 262,144 bytes`. A single page table contains `1,024 entries` and covers `1,024 × 4 KB = 4 MB`, so covering `256 MB` requires `64 page tables`. Each page table occupies exactly one `4 KB page`, so `64 × 4 KB = 262,144 bytes`, which matches the earlier calculation. In addition, the page directory itself always takes one 4 KB page (`1,024 entries × 4 bytes`), even though only `64 entries` are actively used here.
+    >
+    > Beyond these hardware structures, the kernel also maintains a software bookkeeping array of `PageInfo` structures to record the state of each frame (for example, reference counts and free list links). With each PageInfo being 8 bytes and one per frame, the cost is 65,536 × 8 = 524,288 bytes. Summing everything gives `262,144 (page tables) + 4,096 (page directory) + 524,288 (PageInfo) = 790,528 bytes`, or about 772 KB. The breakdown is roughly `66% for PageInfo`, `33% for page tables`, and `0.5% for the page directory`. Relative to the total `256 MB of RAM`, this overhead is only about `0.3%`, showing that most of the cost comes from per-frame software metadata rather than the paging hardware itself.
 
 6. Revisit the page table setup in kern/entry.S and kern/entrypgdir.c. Immediately after we turn on paging, EIP is still a low number (a little over 1MB). At what point do we transition to running at an EIP above KERNBASE? What makes it possible for us to continue executing at a low EIP between when we enable paging and when we begin running at an EIP above KERNBASE? Why is this transition necessary?
 
-When paging is first enabled, the processor is still executing instructions with a low EIP value (`just above 1 MB`) because the kernel’s initial page directory maps the first `4 MB of physical memory` into two virtual regions: one starting at `0x00000000` and another starting at `KERNBASE` (`0xf0000000`). This dual mapping allows the same physical instructions to be accessible both at their low physical addresses (where the CPU is currently fetching from) and at the high virtual addresses where the kernel is linked. Thanks to this setup, the CPU can continue running safely at a low EIP even though paging is turned on, because the virtual addresses below 4 MB are still validly mapped to the corresponding physical frames.
-
-The actual transition to running at EIP above `KERNBASE` happens when execution jumps into the relocated kernel code (the label in `entry.S` that transfers control to C code). At that point, instructions are fetched from the high memory mapping at `0xf0100000`, which matches the addresses where the kernel was linked. This transition is necessary because the kernel is designed to run entirely in the high half of the address space, leaving the lower addresses available for user programs and avoiding conflicts. Once the kernel switches to its full page directory, the low `[0, 4 MB)` mapping is removed, so continuing to run at a low EIP would no longer work—hence the controlled jump to the high virtual addresses is required.
+    > When paging is first enabled, the processor is still executing instructions with a low EIP value (`just above 1 MB`) because the kernel’s initial page directory maps the first `4 MB of physical memory` into two virtual regions: one starting at `0x00000000` and another starting at `KERNBASE` (`0xf0000000`). This dual mapping allows the same physical instructions to be accessible both at their low physical addresses (where the CPU is currently fetching from) and at the high virtual addresses where the kernel is linked. Thanks to this setup, the CPU can continue running safely at a low EIP even though paging is turned on, because the virtual addresses below 4 MB are still validly mapped to the corresponding physical frames.
+    >
+    > The actual transition to running at EIP above `KERNBASE` happens when execution jumps into the relocated kernel code (the label in `entry.S` that transfers control to C code). At that point, instructions are fetched from the high memory mapping at `0xf0100000`, which matches the addresses where the kernel was linked. This transition is necessary because the kernel is designed to run entirely in the high half of the address space, leaving the lower addresses available for user programs and avoiding conflicts. Once the kernel switches to its full page directory, the low `[0, 4 MB)` mapping is removed, so continuing to run at a low EIP would no longer work—hence the controlled jump to the high virtual addresses is required.
 
 </details>
