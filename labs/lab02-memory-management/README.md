@@ -304,11 +304,11 @@ The variable `x` should have the type `uintptr_t`. Since `value` is a pointer to
 
 For short, x86 processors use a 2-level page table shown below:
 
-![alt text](image.png)
+![alt text](./assets/image.png)
 
 And the format of DIR ENTRY and PG TBL ENTRY is illustrated in the figure below:
 
-![alt text](image-1.png)
+![alt text](./assets/image-1.png)
 
 The JOS kernel sometimes only knows a physical address (e.g., when allocating or initializing page tables), but since the CPU always uses virtual memory, it cannot directly read/write that physical location. To solve this, JOS maps all of physical memory into the virtual region starting at 0xf0000000, so the kernel can translate a `physical → virtual` address by adding `0xf0000000` `(KADDR(pa))`, and translate a virtual → physical address by subtracting 0xf0000000 `(PADDR(va))`. Because both page tables and pages are located on 4K boundaries, the lower 12 bits of their address is always zero. The PTE only needs 20 bits to indicate the starting physical address.
 
@@ -446,5 +446,133 @@ page_insert(pde_t *pgdir, struct PageInfo *pp, void *va, int perm)
 	return 0;
 }
 ```
+
+</details>
+
+<details>
+<summary><strong>Exercise 5</strong></summary>
+
+> Fill in the missing code in mem_init() after the call to check_page().
+
+```c
+	//////////////////////////////////////////////////////////////////////
+	// Allocate an array of npages 'struct PageInfo's and store it in 'pages'.
+	// The kernel uses this array to keep track of physical pages: for
+	// each physical page, there is a corresponding struct PageInfo in this
+	// array.  'npages' is the number of physical pages in memory.  Use memset
+	// to initialize all fields of each struct PageInfo to 0.
+	// Your code goes here:
+
+    pages = (struct PageInfo *) boot_alloc(npages * sizeof(struct PageInfo));
+    memset(pages, 0, npages * sizeof(struct PageInfo));
+
+    //////////////////////////////////////////////////////////////////////
+	// Now we set up virtual memory
+
+	//////////////////////////////////////////////////////////////////////
+	// Map 'pages' read-only by the user at linear address UPAGES
+	// Permissions:
+	//    - the new image at UPAGES -- kernel R, user R
+	//      (ie. perm = PTE_U | PTE_P)
+	//    - pages itself -- kernel RW, user NONE
+	// Your code goes here:
+
+    boot_map_region(kern_pgdir, UPAGES, PTSIZE, PADDR(pages), PTE_U);
+	//////////////////////////////////////////////////////////////////////
+	// Use the physical memory that 'bootstack' refers to as the kernel
+	// stack.  The kernel stack grows down from virtual address KSTACKTOP.
+	// We consider the entire range from [KSTACKTOP-PTSIZE, KSTACKTOP)
+	// to be the kernel stack, but break this into two pieces:
+	//     * [KSTACKTOP-KSTKSIZE, KSTACKTOP) -- backed by physical memory
+	//     * [KSTACKTOP-PTSIZE, KSTACKTOP-KSTKSIZE) -- not backed; so if
+	//       the kernel overflows its stack, it will fault rather than
+	//       overwrite memory.  Known as a "guard page".
+	//     Permissions: kernel RW, user NONE
+	// Your code goes here:
+
+    /*
+        Stack region that backed by physical memory:
+        *    KERNBASE, ---->  +------------------------------+ 0xf0000000 <- to here --
+        *    KSTACKTOP        |     CPU0's Kernel Stack      | RW/--  KSTKSIZE        |
+        *                     | - - - - - - - - - - - - - - -|  <- From here ----------
+        *
+        Guard page region that is not backed by physical memory:
+        *                     +------------------------------+                   |  <- to here --
+        *                     |     CPU1's Kernel Stack      | RW/--  KSTKSIZE   |
+        *                     | - - - - - - - - - - - - - - -|                 PTSIZE
+        *                     |      Invalid Memory (*)      | --/--  KSTKGAP    |
+        *                     +------------------------------+                   |
+        *                     :              .               :                   |
+        *                     :              .               :                   |
+        *    MMIOLIM ------>  +------------------------------+ 0xefc00000      --+  <- From here
+    */
+
+    uintptr_t backed_stack = KSTACKTOP - KSTKSIZE;
+    boot_map_region(kern_pgdir, backed_stack, KSTKSIZE, PADDR(bootstack), PTE_W); // Map the backed part of the stack to physical memory
+
+	//////////////////////////////////////////////////////////////////////
+	// Map all of physical memory at KERNBASE.
+	// Ie.  the VA range [KERNBASE, 2^32) should map to
+	//      the PA range [0, 2^32 - KERNBASE)
+	// We might not have 2^32 - KERNBASE bytes of physical memory, but
+	// we just set up the mapping anyway.
+	// Permissions: kernel RW, user NONE
+	// Your code goes here:
+
+    /*
+    After this all physical address can be accessed by kernel directly by adding KERNBASE
+    */
+    uintptr_t pa_end = 0xFFFFFFFF - KERNBASE + 1; // Calculate the end of physical address to be mapped
+    boot_map_region(kern_pgdir, KERNBASE, pa_end, 0, PTE_W); // Map all physical memory to virtual address space starting from KERNBASE
+```
+
+</details>
+
+<details>
+<summary><strong>Questions</strong></summary>
+
+2. What entries (rows) in the page directory have been filled in at this point? What addresses do they map and where do they point? In other words, fill out this table as much as possible:
+
+We can use the following to perform the relevant calculations:
+
+```py
+# To calculate the base virtual address from the offset
+hex(int(math.pow(2,22))*offset)
+# to calculate the offset from a virtual address:
+address // int(math.pow(2,22))
+```
+
+Entry | Base Virtual Address  | Points to (logically):
+---|---|---
+1023|0xffc00000| Page table for top 4MB of phys memory
+...|...| page addresses holding RAM
+960|0xf0000000| the page table holding the mappings for the beginning of RAM (phyical address 0) (writable)
+959|0xefc00000| kernel stack (writable)
+958|0xef800000| unmapped
+957|0xef400000| a virtual page table at virtual address UVPT.
+956|0xef000000|  page table that contains the pages struct (which is readonly)
+955|0xeec00000|  unmapped
+...|...| unmapped
+0|0x00000000| unmapped
+
+3. We have placed the kernel and user environment in the same address space. Why will user programs not be able to read or write the kernel's memory? What specific mechanisms protect the kernel memory?
+
+The kernel memory is protected by the page-level protection mechanism of the x86 architecture. Specifically, the page table entries (PTEs) for the kernel memory are marked with the User/Supervisor (U/S) bit set to 0, indicating that they are supervisor-level pages. This means that only code running in supervisor mode (CPL 0, 1, or 2) can access these pages. User programs, which run in user mode (CPL 3), cannot access these pages because their U/S bit is set to 1.
+
+4. What is the maximum amount of physical memory that this operating system can support? Why?
+
+Read [this](https://qiita.com/kagurazakakotori/items/4232da25c412a0403c10#question-4)
+
+5. How much space overhead is there for managing memory, if we actually had the maximum amount of physical memory? How is this overhead broken down?
+
+We start from the assumption of a maximum of 256 MB of RAM, a page size of 4 KB, a classic 32-bit x86 paging scheme (no PAE, no huge pages), 4-byte page table entries (PTEs), and that the kernel maps the entire physical memory into its virtual address space. Dividing 256 MB by 4 KB gives 65,536 physical frames. Each frame requires one PTE, so the total cost for entries is `65,536 × 4 = 262,144 bytes`. A single page table contains `1,024 entries` and covers `1,024 × 4 KB = 4 MB`, so covering `256 MB` requires `64 page tables`. Each page table occupies exactly one `4 KB page`, so `64 × 4 KB = 262,144 bytes`, which matches the earlier calculation. In addition, the page directory itself always takes one 4 KB page (`1,024 entries × 4 bytes`), even though only `64 entries` are actively used here.
+
+Beyond these hardware structures, the kernel also maintains a software bookkeeping array of `PageInfo` structures to record the state of each frame (for example, reference counts and free list links). With each PageInfo being 8 bytes and one per frame, the cost is 65,536 × 8 = 524,288 bytes. Summing everything gives `262,144 (page tables) + 4,096 (page directory) + 524,288 (PageInfo) = 790,528 bytes`, or about 772 KB. The breakdown is roughly `66% for PageInfo`, `33% for page tables`, and `0.5% for the page directory`. Relative to the total `256 MB of RAM`, this overhead is only about `0.3%`, showing that most of the cost comes from per-frame software metadata rather than the paging hardware itself.
+
+6. Revisit the page table setup in kern/entry.S and kern/entrypgdir.c. Immediately after we turn on paging, EIP is still a low number (a little over 1MB). At what point do we transition to running at an EIP above KERNBASE? What makes it possible for us to continue executing at a low EIP between when we enable paging and when we begin running at an EIP above KERNBASE? Why is this transition necessary?
+
+When paging is first enabled, the processor is still executing instructions with a low EIP value (`just above 1 MB`) because the kernel’s initial page directory maps the first `4 MB of physical memory` into two virtual regions: one starting at `0x00000000` and another starting at `KERNBASE` (`0xf0000000`). This dual mapping allows the same physical instructions to be accessible both at their low physical addresses (where the CPU is currently fetching from) and at the high virtual addresses where the kernel is linked. Thanks to this setup, the CPU can continue running safely at a low EIP even though paging is turned on, because the virtual addresses below 4 MB are still validly mapped to the corresponding physical frames.
+
+The actual transition to running at EIP above `KERNBASE` happens when execution jumps into the relocated kernel code (the label in `entry.S` that transfers control to C code). At that point, instructions are fetched from the high memory mapping at `0xf0100000`, which matches the addresses where the kernel was linked. This transition is necessary because the kernel is designed to run entirely in the high half of the address space, leaving the lower addresses available for user programs and avoiding conflicts. Once the kernel switches to its full page directory, the low `[0, 4 MB)` mapping is removed, so continuing to run at a low EIP would no longer work—hence the controlled jump to the high virtual addresses is required.
 
 </details>
